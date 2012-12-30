@@ -1,0 +1,473 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>Megatokyo Chart</title>
+		
+		
+		<!-- 1. External javascripts we'll need. -->
+		<script type="text/javascript" src="js/jquery.min.js"></script>
+		<script type="text/javascript" src="js/highcharts.src.js"></script>
+		
+		
+		<!-- 2. Initialize jQuery. -->
+		<!-- This can go into a separate .js file -->
+		<script type="text/javascript">
+		$(document).ready(function() {
+
+			// ====================================================================
+			// Language strings, Colour settings, & Font settings.
+
+
+			// Edit/Translate these strings as necessary.
+			function languageStrings() {
+
+				var languageVariables = {
+					chartTitleText:				'Megatokyo Comic Strip Progress.',			// Char title.
+					timeAxisTitle:				'Time',										// Year axis title (on the bottom horizontal axis).
+					numComicsAxisLabel:			'Number of comic strips',					// Number of comic strips axis label (on the left vertical axis).
+					numComicMonthAxisLabel:		'Number of comic strips per month'			// Number of comic strips/month label (on the right vertical axis).
+				}
+
+				return languageVariables;
+			}
+
+			// Colour Variables
+			function colourStrings() {
+
+				var colourVariables = {
+					barColours:					['#cfb820', '#aa4643', '#2d5fa1', '#2a8e69', '#8047a9'],	// Colours for each of the bars/areas
+					yearColourBackground:		['#fffdf0', '#fff5f5', '#f5f9ff', '#f5fffb', '#fcf7ff'],	// The background colours in the chart area - one colour per two years.
+
+					yearAxisTitleColour:		'#000000',						// The text colour for the year axis title.
+					numComicsAxisTitleColour:	'#000000',						// The text colour for the number of comics axis title.
+					comicsMonthAxisTitleColour:	'#e2a728',						// The text colour for the number of comics per month axis title.
+					comicsMonthGraphColour:		'#e2a728',						// Graph line & point colour for the comics per month series.
+					sComicsMonthGraphColour:	'#bd3e3e',						// Graph line & point colour for the Story comics per month series.
+					chartBackgroundColour:		'#ffffff'						// Background colour for the chart.
+				}
+
+				return colourVariables;
+			}
+
+
+			// ====================================================================
+			// Script starts here...
+
+
+			// Create a range of (inclusive) values
+			function createValueRange(lowValue, highValue) {
+				var rangeListIndex = 0;
+				var rangeListArray = [];
+				rangeListArray[rangeListIndex] = lowValue;
+
+				// Insert elements into the array
+				while (rangeListArray[rangeListArray.length - 1] < highValue) {
+					rangeListIndex = rangeListArray.length;
+					rangeListArray[rangeListIndex] = rangeListArray[rangeListIndex - 1] + 1;
+				}
+
+				return rangeListArray;
+			}
+
+
+			// Insert comic data into a specific array (for that comic).
+			function insertIntoComicTypeArray(comicArray, comicDate) {
+				var comicNumber = comicArray.length + 1;
+				var comicElement = [comicDate, comicNumber];
+				comicArray.push(comicElement);
+				return comicArray;
+			}
+
+
+			// Create the HTML Canvas graph. We'll assign the function to the jQuery object so that
+			// we can call it from another jQuery scope.
+			$.megatokyo_chart = function barcharty($xmlObj, divID, chartDataVars) {
+
+				// Variable sanity check
+				if (chartDataVars.lowYear < chartDataVars.highYear) {
+
+					/*   Field number & value:
+					 *   """""""""""""""""""""
+					 * 0:  Comic number <comic_num>
+					 * 1:  Comic date <comic_date>
+					 * 2:  Comic type <comic_type>
+					 */
+
+					// Create a list of years.
+					var yearListArray = createValueRange(chartDataVars.lowYear, chartDataVars.highYear);
+					var yearListArrayLength = yearListArray.length;
+
+					// Set imported arrays to variables.
+					var langVars = languageStrings();
+					var colourVars = colourStrings();
+					var yearAreaColourBackground = colourVars.yearColourBackground;
+
+					// Define counter variables.
+					var i, j, k;
+
+					// Graph axis limits.
+					var graphXAxisLeft = Date.UTC(chartDataVars.lowYear, 0, 1);
+					var graphXAxisRight = Date.UTC(chartDataVars.highYear + 1, 0, 1);
+
+					// Create an array of monthly unix timestamps...
+					var monthlyStartUnixDates = [];
+					var monthlyMidUnixDates = [];
+					var monthlyStoryMidUnixDates = [];
+
+					for (j = 0; j < yearListArrayLength; j++) {
+						for (k = 0; k < 12; k++) {
+							monthlyStartUnixDates.push( Date.UTC(yearListArray[j], k, 1) );
+							monthlyMidUnixDates.push( [Date.UTC(yearListArray[j], k, 15), 0] );
+							monthlyStoryMidUnixDates.push( [Date.UTC(yearListArray[j], k, 15), 0] );
+						}
+					}
+					monthlyStartUnixDates.push( graphXAxisRight );
+
+					
+					// Loop over each XML <comic> element. The .find selects <comic> elements
+					// and the .each allows us to iterate over each <comic> element.
+
+					// Define in-loop variables
+					var currentComicNum, currentComicDate, currentComicType;
+					var storyComicArray = [];
+					var nonStoryComicArray = [];
+					var dpdComicArray = [];
+					var sgdComicArray = [];
+					var guestComicArray = [];
+					var comicsPerMonthArray = [];
+					var monthlyUnixDatesCounter = 0;
+					var comicInDateRange = false;
+
+					$xmlObj.find('comic').each(function(i, comicVal) {
+					
+						// Set pointer to rowVal object.
+						$comicVal = $(comicVal);
+
+						// Set variables to the comic number, type, and date.
+						// There are several things going on in these lines:
+						//
+						//	$comicVal			-	The object containing the data for each XML <comic>
+						//							(i.e. <comic_---> elements).
+						//	.find(comic_---)	-	Find <comic_---> elements in the $comicVal object.
+						//	.get(0)				-	Get only the 0th <col> element.
+						//	$(...)				-	The object containing the <comic_---> element.
+						//	.text()				-	Return the text in the nth <comic_---> element.
+						//	parseInt(_, 10)		-	Convert the <comic_---> element text to an integer.
+						//currentComicNum  = parseInt($($comicVal.find('comic_num').get(0)).text(), 10);
+						currentComicDate = parseInt($($comicVal.find('comic_date').get(0)).text(), 10) * 1000;
+						currentComicType = $($comicVal.find('comic_type').get(0)).text();
+
+						// Store these variables into different arrays, one for each comic type.
+						if (currentComicType == 'Story') {
+							storyComicArray = insertIntoComicTypeArray(storyComicArray, currentComicDate);
+						} else if (currentComicType == 'Non story') {
+							nonStoryComicArray = insertIntoComicTypeArray(nonStoryComicArray, currentComicDate);
+						} else if (currentComicType == 'Dead Piro Day') {
+							dpdComicArray = insertIntoComicTypeArray(dpdComicArray, currentComicDate);
+						} else if (currentComicType == 'Shirt Guy Dom') {
+							sgdComicArray = insertIntoComicTypeArray(sgdComicArray, currentComicDate);
+						} else if (currentComicType == 'Guest') {
+							guestComicArray = insertIntoComicTypeArray(guestComicArray, currentComicDate);
+						}
+
+						// Determine the number of comics per month...
+
+						// Determine the correct monthly range for the comic...
+						while(comicInDateRange == false) {
+							if ( (currentComicDate >= monthlyStartUnixDates[monthlyUnixDatesCounter]) && (currentComicDate < monthlyStartUnixDates[monthlyUnixDatesCounter + 1]) ) {
+								comicInDateRange = true;
+							} else {
+								monthlyUnixDatesCounter++;
+							}
+						}
+
+						// Add the comic strip to monthly array.
+						monthlyMidUnixDates[monthlyUnixDatesCounter][1] = monthlyMidUnixDates[monthlyUnixDatesCounter][1] + 1;
+
+						if (currentComicType == 'Story') {
+							monthlyStoryMidUnixDates[monthlyUnixDatesCounter][1] = monthlyStoryMidUnixDates[monthlyUnixDatesCounter][1] + 1;
+						}
+
+						// Reset the comic date range so we can check it again (for the next comic strip).
+						comicInDateRange = false;
+					});
+
+					// Finally we'll want to remove a few points from the start of the comics per month
+					// series as they're zero.
+					var monthlyMidUnixDatesLength = monthlyMidUnixDates.length;
+					var monthlyMidUnixDatesSplicePoint = 0;
+
+					for (i = 0; i < monthlyMidUnixDatesLength; i++) {
+						if (monthlyMidUnixDates[i][1] > 0) {
+							monthlyMidUnixDatesSplicePoint = i;
+							break;
+						}
+					}
+					var monthlyMidUnixDatesRemoved = monthlyMidUnixDates.splice(0, monthlyMidUnixDatesSplicePoint);
+					var monthlyStoryMidUnixDatesRemoved = monthlyStoryMidUnixDates.splice(0, monthlyMidUnixDatesSplicePoint);
+
+
+					// Now we'll setup the graph variables.
+					var options = {
+						// Set Colours
+						colors: colourVars.barColours,
+
+						// Graph type & div ID to render to.
+						chart: {
+							renderTo: divID,
+							backgroundColor: colourVars.chartBackgroundColour,
+							zoomType: 'xy',
+							type: 'spline'
+						},
+
+						// Disable credit notification on the graph.
+						credits: {
+							enabled: false
+						},
+
+						// Disable graph animation & set the bar chart
+						// group spacing to a smaller value.
+						plotOptions: {
+							spline: {
+								animation:	false,
+								lineWidth: 2,
+								marker: {
+											enabled: true
+								}
+							}
+						},
+
+						// Graph title.
+						title: {
+							text: langVars.chartTitleText
+						},
+
+						// Graph legend
+						legend: {
+							margin: 25
+						},
+
+						// x-axis title & category list (i.e. the years)
+						xAxis: [{
+							title: {
+								text: langVars.timeAxisTitle,							
+								style: {
+									color: colourVars.yearAxisTitleColour
+								}
+							},
+							type: 'datetime',
+							min: graphXAxisLeft,
+							max: graphXAxisRight,
+							plotBands: []
+						}],
+
+						// y-axis title (the number of animes).
+						yAxis: [{
+							title: {
+								text: langVars.numComicsAxisLabel,							
+								style: {
+									color: colourVars.numComicsAxisTitleColour
+								}
+							},
+							min: chartDataVars.lowNumberComics,
+							max: chartDataVars.highNumberComics,
+							tickInterval: chartDataVars.tickNumberComics,
+							endOnTick: false
+						},
+
+						// second y-axis.
+						{
+							title: {
+								text: langVars.numComicMonthAxisLabel,							
+								style: {
+									color: colourVars.comicsMonthAxisTitleColour
+								}
+							},
+							min: chartDataVars.lowNumberComicsMonth,
+							max: chartDataVars.highNumberComicsMonth,
+							tickInterval: chartDataVars.tickNumberComicsMonth,
+							opposite: true,
+							endOnTick: false
+						}],
+
+						// The x-axis series (each graph vertical-bar for each year). comicsMonthAxisTitleColour
+						series: []
+					};
+
+
+					// Here we setup each x-axis series.
+
+
+					// Define the background plot colours for each year. We set the
+					// bacground colour counter to zero first of all.
+					var yearColourBackgroundCounter = 0;
+					var yearColourBackgroundItem;
+
+					for (i = 0; i < yearListArrayLength; i++) {
+
+						// Create the plot background item & insert it into the options array.
+						yearColourBackgroundItem = {
+								color: yearAreaColourBackground[yearColourBackgroundCounter],
+								from: Date.UTC(yearListArray[i], 0, 1),
+								to: Date.UTC(yearListArray[i] + 1, 0, 1)
+						};
+						
+						options.xAxis[0].plotBands.push(yearColourBackgroundItem);
+
+						// Increment the counter for the background colour list.
+						// Since we want two years to share the same colour, we'll only
+						// do this if the counter i is odd.
+						if ( i % 2 == 1 ) {
+							yearColourBackgroundCounter++;
+						}
+
+						// If the counter reachers the length of the background colour list
+						// then we need to reset the counter back to zero so the first colour
+						// is picked again.
+						if (yearColourBackgroundCounter == yearAreaColourBackground.length) {
+							yearColourBackgroundCounter = 0;
+						}
+					}
+
+					// Place the culmative average data into the series array.
+					var seriesStoryComics = {
+						name: 'Story',
+						data: storyComicArray,
+						marker: {
+									enabled: false
+						}
+					}
+					options.series.push(seriesStoryComics);
+
+					var seriesNonStoryComics = {
+						name: 'Non-Story',
+						data: nonStoryComicArray,
+						marker: {
+									enabled: false
+						}
+					}
+					options.series.push(seriesNonStoryComics);
+
+					var seriesDPDComics = {
+						name: 'Dead Piro Day',
+						data: dpdComicArray,
+						marker: {
+									enabled: false
+						}
+					}
+					options.series.push(seriesDPDComics);
+
+					var seriesSGDComics = {
+						name: 'Shirt Guy Dom',
+						data: sgdComicArray,
+						marker: {
+									enabled: false
+						}
+					}
+					options.series.push(seriesSGDComics);
+
+					var seriesGuestComics = {
+						name: 'Guest',
+						data: guestComicArray,
+						marker: {
+									enabled: false
+						}
+					}
+					options.series.push(seriesGuestComics);
+
+					var seriesComicsPerMonth = {
+						name: 'Comic strips per month',
+						data: monthlyMidUnixDates,
+						color: colourVars.comicsMonthGraphColour,
+						lineWidth: 1,
+						marker: { 
+							symbol: 'square',
+							radius: 4
+						},
+						yAxis: 1,
+						visible: true
+					}
+					options.series.push(seriesComicsPerMonth);
+
+					var seriesStoryComicsPerMonth = {
+						name: 'Story comic strips per month',
+						data: monthlyStoryMidUnixDates,
+						color: colourVars.sComicsMonthGraphColour,
+						lineWidth: 1,
+						marker: { 
+							symbol: 'circle',
+							radius: 3
+						},
+						yAxis: 1,
+						visible: false
+					}
+					options.series.push(seriesStoryComicsPerMonth);
+
+
+					// Output the chart
+					var chart = new Highcharts.Chart(options);
+
+				// End Sanity check
+				}
+
+			// End graph.
+			}
+			
+		// End jQuery scope.
+		});
+
+		</script>
+
+
+		<!-- This needs to go into the post header... -->
+		<script type="text/javascript">
+
+		// Continue the jQuery scope here...
+		$(document).ready(function() {
+
+
+			// -----------------------------------------------------------------
+			// This script here will be placed into a post <head> section.
+			// Make sure to give the container a unique name.
+
+			// Load the XML file as an object once, and pass the reference to the graph calls.
+			$.get('megatokyo.xml', function(xml) {
+
+				// Create the XML object reference
+				$xmlData = $(xml);
+
+				// Chart Variables
+				var dataLimitValues = {
+					lowYear:				2000,	// Lower year value for the data range (from which comic data will be considered).
+					highYear:				2012,	// Higher year value for the data range (up to which which comic data will be considered).
+					lowNumberComics:		0,		// Lower value for the number of comic strips on the left-hand vertical axis.
+					highNumberComics:		1100,	// Higher value for the number of comic strips on the left-hand vertical axis.
+					tickNumberComics:		200,	// Interval between the lower and higher values for the number of comic strips. A line will be drawn at each interval value.
+					lowNumberComicsMonth:	0,		// Lower value for the number of comic strips per month on the right-hand vertical axis.
+					highNumberComicsMonth:	22,		// Higher value for the number of comic strips per month on the right-hand vertical axis.
+					tickNumberComicsMonth:	4		// Interval between the lower and higher values per month for the number of comic strips. A line will be drawn at each interval value.
+				};
+
+				// Execute the chart functions
+				// func:  XML File, DIV container name, chart options, XML file column headings.
+				$.megatokyo_chart($xmlData, 'container', dataLimitValues);
+
+			});
+			// -----------------------------------------------------------------
+
+		// End jQuery scope.
+		});
+		</script>
+		
+
+
+	</head>
+	<body>
+		
+		<!-- 3. Add the container -->
+		<div id="container" style="width: 1000px; height: 650px; margin: 0 auto"></div>
+		
+				
+	</body>
+</html>
